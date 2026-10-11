@@ -11,9 +11,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from app.client.ciam import get_otp, submit_otp
-from app.client.engsel import get_balance, send_api_request
+from app.client.engsel import get_balance, get_family, get_package_details, send_api_request
+from app.client.purchase.balance import settlement_balance
 from app.menus.util import format_quota_byte
 from app.service.auth import AuthInstance
+from app.service.bookmark import BookmarkInstance
+from app.type_dict import PaymentItem
 
 
 logger = logging.getLogger(__name__)
@@ -26,6 +29,7 @@ class TelegramBot:
         self.allowed_user_id = allowed_user_id
         self.offset = None
         self.login_state = None
+        self.pending_purchase = None
 
     def call_api(self, method: str, **data):
         data = {key: value for key, value in data.items() if value is not None}
@@ -102,14 +106,39 @@ class TelegramBot:
         if not text:
             return
 
-        command, _, _ = text.partition(" ")
+        command, _, args = text.partition(" ")
         command = command.split("@", 1)[0].lower()
-        if command in ("/start", "/help"):
+        args = args.split()
+        if command not in ("/buy", "/buybookmark", "/confirm"):
+            self.pending_purchase = None
+        if command == "/family":
+            self.login_state = None
+            self.send_family(chat_id, args)
+        elif command == "/bookmark":
+            self.login_state = None
+            self.add_bookmark(chat_id, args)
+        elif command == "/bookmarks":
+            self.login_state = None
+            self.send_bookmarks(chat_id)
+        elif command == "/unbookmark":
+            self.login_state = None
+            self.remove_bookmark(chat_id, args)
+        elif command == "/buy":
+            self.login_state = None
+            self.request_buy(chat_id, args)
+        elif command == "/buybookmark":
+            self.login_state = None
+            self.request_buy_bookmark(chat_id, args)
+        elif command == "/confirm":
+            self.login_state = None
+            self.confirm_purchase(chat_id)
+        elif command in ("/start", "/help"):
             self.login_state = None
             self.send_message(chat_id, self.help_text())
         elif command == "/cancel":
             self.login_state = None
-            self.send_message(chat_id, "Login dibatalkan.")
+            self.pending_purchase = None
+            self.send_message(chat_id, "Proses dibatalkan.")
         elif command == "/login":
             self.login_state = {"step": "phone", "attempts": 0}
             self.send_message(chat_id, "Masukkan nomor XL (contoh: 6281234567890).")
@@ -131,6 +160,12 @@ class TelegramBot:
             "/login — login dengan nomor XL dan OTP\n"
             "/balance — lihat pulsa dan masa aktif\n"
             "/packages — lihat paket aktif\n"
+            "/family <family_code> — lihat opsi paket dalam family code\n"
+            "/bookmark <family_code> <no> — simpan paket ke bookmark\n"
+            "/bookmarks — lihat bookmark\n"
+            "/unbookmark <no> — hapus bookmark\n"
+            "/buy <family_code> <no> — beli paket (pulsa), lalu /confirm\n"
+            "/buybookmark <no> — beli paket dari bookmark, lalu /confirm\n"
             "/cancel — batalkan proses login\n"
             "/help — tampilkan bantuan"
         )
@@ -284,6 +319,204 @@ class TelegramBot:
                     total = f"{total} SMS"
                 lines.append(f"   {name}: {remaining} / {total}")
         self.send_message(chat_id, "\n".join(lines))
+
+    def load_family_options(self, user: dict, family_code: str):
+        """Return (family_name, flat option list) or (None, None)."""
+        try:
+            with redirect_stdout(StringIO()):
+                data = get_family(AuthInstance.api_key, user["tokens"], family_code)
+        except Exception:
+            data = None
+        if not isinstance(data, dict):
+            return None, None
+        options = []
+        for variant in data.get("package_variants", []):
+            for option in variant.get("package_options", []):
+                options.append(
+                    {
+                        "variant_name": variant.get("name", ""),
+                        "variant_code": variant.get("package_variant_code", ""),
+                        "order": option.get("order"),
+                        "name": option.get("name", ""),
+                        "price": option.get("price", 0),
+                        "is_enterprise": bool(data["package_family"].get("is_enterprise", False)),
+                    }
+                )
+        return data["package_family"].get("name", ""), options
+
+    @staticmethod
+    def parse_index(value: str, size: int):
+        if not value.isdigit() or not 1 <= int(value) <= size:
+            return None
+        return int(value) - 1
+
+    def send_family(self, chat_id: int, args: list):
+        user = self.active_user()
+        if not user:
+            self.send_message(chat_id, "Belum ada akun aktif. Gunakan /login terlebih dahulu.")
+            return
+        if len(args) != 1:
+            self.send_message(chat_id, "Format: /family <family_code>")
+            return
+        name, options = self.load_family_options(user, args[0])
+        if not options:
+            self.send_message(chat_id, "Family code tidak ditemukan atau tidak ada paket.")
+            return
+        lines = [f"{name} ({args[0]})"]
+        for index, opt in enumerate(options, start=1):
+            lines.append(f"{index}. [{opt['variant_name']}] {opt['name']} - Rp {opt['price']}")
+        self.send_message(chat_id, "\n".join(lines))
+
+    def add_bookmark(self, chat_id: int, args: list):
+        user = self.active_user()
+        if not user:
+            self.send_message(chat_id, "Belum ada akun aktif. Gunakan /login terlebih dahulu.")
+            return
+        if len(args) != 2:
+            self.send_message(chat_id, "Format: /bookmark <family_code> <no>. Lihat nomor dengan /family.")
+            return
+        name, options = self.load_family_options(user, args[0])
+        idx = self.parse_index(args[1], len(options or []))
+        if idx is None:
+            self.send_message(chat_id, "Family code atau nomor paket tidak valid.")
+            return
+        opt = options[idx]
+        with redirect_stdout(StringIO()):
+            added = BookmarkInstance.add_bookmark(
+                family_code=args[0],
+                family_name=name,
+                is_enterprise=opt["is_enterprise"],
+                variant_name=opt["variant_name"],
+                option_name=opt["name"],
+                order=opt["order"],
+            )
+        self.send_message(
+            chat_id,
+            "Bookmark ditambahkan." if added else "Bookmark sudah ada.",
+        )
+
+    def send_bookmarks(self, chat_id: int):
+        bookmarks = BookmarkInstance.get_bookmarks()
+        if not bookmarks:
+            self.send_message(chat_id, "Belum ada bookmark.")
+            return
+        lines = ["Bookmark:"]
+        for index, b in enumerate(bookmarks, start=1):
+            lines.append(
+                f"{index}. {b['family_name']} - {b['variant_name']} - {b['option_name']}\n"
+                f"   {b['family_code']} (opsi {b['order']})"
+            )
+        self.send_message(chat_id, "\n".join(lines))
+
+    def remove_bookmark(self, chat_id: int, args: list):
+        bookmarks = BookmarkInstance.get_bookmarks()
+        idx = self.parse_index(args[0], len(bookmarks)) if len(args) == 1 else None
+        if idx is None:
+            self.send_message(chat_id, "Format: /unbookmark <no>. Lihat nomor dengan /bookmarks.")
+            return
+        b = bookmarks[idx]
+        with redirect_stdout(StringIO()):
+            BookmarkInstance.remove_bookmark(
+                b["family_code"], b["is_enterprise"], b["variant_name"], b["order"]
+            )
+        self.send_message(chat_id, "Bookmark dihapus.")
+
+    def request_buy(self, chat_id: int, args: list):
+        user = self.active_user()
+        if not user:
+            self.send_message(chat_id, "Belum ada akun aktif. Gunakan /login terlebih dahulu.")
+            return
+        if len(args) != 2:
+            self.send_message(chat_id, "Format: /buy <family_code> <no>. Lihat nomor dengan /family.")
+            return
+        _, options = self.load_family_options(user, args[0])
+        idx = self.parse_index(args[1], len(options or []))
+        if idx is None:
+            self.send_message(chat_id, "Family code atau nomor paket tidak valid.")
+            return
+        self.set_pending(chat_id, args[0], options[idx])
+
+    def request_buy_bookmark(self, chat_id: int, args: list):
+        user = self.active_user()
+        if not user:
+            self.send_message(chat_id, "Belum ada akun aktif. Gunakan /login terlebih dahulu.")
+            return
+        bookmarks = BookmarkInstance.get_bookmarks()
+        idx = self.parse_index(args[0], len(bookmarks)) if len(args) == 1 else None
+        if idx is None:
+            self.send_message(chat_id, "Format: /buybookmark <no>. Lihat nomor dengan /bookmarks.")
+            return
+        b = bookmarks[idx]
+        _, options = self.load_family_options(user, b["family_code"])
+        match = next(
+            (
+                o for o in options or []
+                if o["order"] == b["order"] and o["variant_name"] == b["variant_name"]
+            ),
+            None,
+        )
+        if not match:
+            self.send_message(chat_id, "Paket bookmark tidak ditemukan lagi.")
+            return
+        self.set_pending(chat_id, b["family_code"], match)
+
+    def set_pending(self, chat_id: int, family_code: str, option: dict):
+        self.pending_purchase = {"family_code": family_code, "option": option}
+        self.send_message(
+            chat_id,
+            f"Beli {option['variant_name']} - {option['name']} (Rp {option['price']}) "
+            "dengan pulsa?\nKetik /confirm untuk melanjutkan atau /cancel.",
+        )
+
+    def confirm_purchase(self, chat_id: int):
+        pending, self.pending_purchase = self.pending_purchase, None
+        if not pending:
+            self.send_message(chat_id, "Tidak ada pembelian yang menunggu konfirmasi.")
+            return
+        user = self.active_user()
+        if not user:
+            self.send_message(chat_id, "Belum ada akun aktif. Gunakan /login terlebih dahulu.")
+            return
+        option = pending["option"]
+        tokens = user["tokens"]
+        try:
+            with redirect_stdout(StringIO()):
+                detail = get_package_details(
+                    AuthInstance.api_key,
+                    tokens,
+                    pending["family_code"],
+                    option["variant_code"],
+                    option["order"],
+                    None,
+                    None,
+                )
+                opt = detail["package_option"]
+                items = [
+                    PaymentItem(
+                        item_code=opt["package_option_code"],
+                        product_type="",
+                        item_price=opt["price"],
+                        item_name=opt["name"],
+                        tax=0,
+                        token_confirmation=detail["token_confirmation"],
+                    )
+                ]
+                res = settlement_balance(
+                    AuthInstance.api_key,
+                    tokens,
+                    items,
+                    "BUY_PACKAGE",
+                    False,
+                    overwrite_amount=opt["price"],
+                    token_confirmation_idx=0,
+                )
+        except Exception:
+            res = None
+        if isinstance(res, dict) and res.get("status") == "SUCCESS":
+            self.send_message(chat_id, f"Pembelian {option['name']} berhasil.")
+        else:
+            msg = res.get("message", "") if isinstance(res, dict) else ""
+            self.send_message(chat_id, f"Pembelian gagal. {msg}".strip())
 
 
 def main():
