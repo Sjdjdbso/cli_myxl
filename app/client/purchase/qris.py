@@ -184,7 +184,7 @@ def settlement_qris(
         return transaction_id
     except Exception as e:
         print("[decrypt err]", e)
-        return resp.text
+        return None
 
 def get_qris_code(
     api_key: str,
