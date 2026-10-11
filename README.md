@@ -35,17 +35,18 @@ bash setup.sh
 python main.py
 ```
 
-# How to run on OpenWrt with ttyd
-1. Install Python 3 and pip using the OpenWrt package manager.
-2. Clone this repository and enter its directory.
-3. Install the Python dependencies:
+# How to run on an OpenWrt terminal
+1. Connect to the router using SSH or its local terminal and clone this repository.
+2. Enter the repository directory and install the dependencies:
 ```
 sh setup.sh
 ```
-4. Start the application from the repository directory:
+The setup script installs Python 3 and pip with `opkg` or `apk` if they are missing. Python 3.10 or newer is required.
+3. Start the application in the terminal:
 ```
 python3 main.py
 ```
+This works in a regular OpenWrt terminal or through ttyd.
 
 # Info
 
