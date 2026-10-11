@@ -607,7 +607,11 @@ class TelegramBot:
                         qr.add_data(qris_code)
                         qr.make(fit=True)
                         image = BytesIO()
-                        qr.make_image(fill_color="black", back_color="white").save(image, format="PNG")
+                        from qrcode.image.pil import PilImage
+
+                        qr.make_image(
+                            image_factory=PilImage, fill_color="black", back_color="white"
+                        ).save(image, format="PNG")
                         self.send_photo(
                             chat_id,
                             image,
@@ -616,6 +620,7 @@ class TelegramBot:
                         return
                     res = None
         except Exception:
+            logging.exception("Purchase failed")
             res = None
         if isinstance(res, dict) and res.get("status") == "SUCCESS":
             if payment_type == "balance":
