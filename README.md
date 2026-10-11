@@ -57,7 +57,7 @@ The Telegram bot supports login, balance, package browsing, and package purchase
    python3 telegram_bot.py
    ```
 
-Use `/login` to request and enter an SMS OTP, `/balance` to check your balance, and `/packages` to list active packages. Use `/family <family_code>` to list options, `/bookmark <family_code> <no>`, `/bookmarks`, and `/unbookmark <no>` to manage bookmarks. Start a purchase with `/buy <family_code> <no>` or `/buybookmark <no>`, then choose `/confirm balance`, `/confirm qris`, or `/confirm ewallet <dana|shopeepay|gopay|ovo> [nomor]`. DANA and OVO require a phone number; QRIS sends the payment code as a photo to scan. Keep the bot token and account-token file private. Do not run the bot and CLI simultaneously because they share account state.
+Use `/menu` to show the feature menu as Telegram buttons; select **Sembunyikan menu fitur** to hide it or **Tampilkan menu fitur** to show it again. You can also use `/login` to request and enter an SMS OTP, `/balance` to check your balance, and `/packages` to list active packages. Use `/family <family_code>` to list options, `/bookmark <family_code> <no>`, `/bookmarks`, and `/unbookmark <no>` to manage bookmarks. Start a purchase with `/buy <family_code> <no>` or `/buybookmark <no>`, then choose `/confirm balance`, `/confirm qris`, or `/confirm ewallet <dana|shopeepay|gopay|ovo> [nomor]`. DANA and OVO require a phone number; QRIS sends the payment code as a photo to scan. Keep the bot token and account-token file private. Do not run the bot and CLI simultaneously because they share account state.
 
 ## Termux
 

@@ -72,10 +72,12 @@ class TelegramBot:
             ("/family", "/family"),
             ("/bookmarks", "/bookmarks"),
             ("/bookmark", "/bookmark"),
+            ("/unbookmark", "/unbookmark"),
             ("/buy", "/buy"),
             ("/buybookmark", "/buybookmark"),
             ("/confirm", "/confirm"),
             ("/help", "/help"),
+            ("/cancel", "/cancel"),
         ]
         keyboard = [
             [
@@ -131,7 +133,8 @@ class TelegramBot:
         command = data.removeprefix("feature:")
         if command not in {
             "/login", "/balance", "/packages", "/family", "/bookmarks",
-            "/bookmark", "/buy", "/buybookmark", "/confirm", "/help",
+            "/bookmark", "/unbookmark", "/buy", "/buybookmark", "/confirm",
+            "/help", "/cancel",
         }:
             self.call_api("answerCallbackQuery", callback_query_id=callback_id)
             return
