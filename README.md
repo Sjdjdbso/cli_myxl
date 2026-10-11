@@ -45,6 +45,20 @@ python3 main.py
 
 On first launch, choose the account menu and follow the prompts to request and enter an SMS OTP. Saved account tokens are stored locally in `refresh-tokens.json`; protect this file and do not share it.
 
+## Telegram bot
+
+The Telegram bot supports login, balance, and active-package queries. It uses the existing MyXL API client and stores account tokens in the same local `refresh-tokens.json` file as the CLI.
+
+1. Create a bot with Telegram's BotFather and set `TELEGRAM_BOT_TOKEN` in `.env`.
+2. Set `TELEGRAM_ALLOWED_USER_ID` to your numeric Telegram user ID. The bot only responds to that user in a private chat.
+3. Start the bot from the repository directory:
+
+   ```sh
+   python3 telegram_bot.py
+   ```
+
+Use `/login` to request and enter an SMS OTP, `/balance` to check your balance, and `/packages` to list active packages. Keep the bot token and account-token file private. Do not run the bot and CLI simultaneously because they share account state.
+
 ## Termux
 
 Install the prerequisites and run the setup:
