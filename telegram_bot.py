@@ -47,14 +47,104 @@ class TelegramBot:
             raise RuntimeError("Telegram API request failed")
         return result["result"]
 
-    def send_message(self, chat_id: int, text: str):
+    def send_message(self, chat_id: int, text: str, reply_markup=None):
         text = text or "No data available."
         for start in range(0, len(text), MAX_MESSAGE_LENGTH):
             self.call_api(
                 "sendMessage",
                 chat_id=chat_id,
                 text=text[start:start + MAX_MESSAGE_LENGTH],
+                reply_markup=reply_markup if start == 0 else None,
             )
+
+    @staticmethod
+    def feature_menu(show: bool = True):
+        if not show:
+            return {
+                "inline_keyboard": [[
+                    {"text": "Tampilkan menu fitur", "callback_data": "menu:show"}
+                ]]
+            }
+        commands = [
+            ("/login", "/login"),
+            ("/balance", "/balance"),
+            ("/packages", "/packages"),
+            ("/family", "/family"),
+            ("/bookmarks", "/bookmarks"),
+            ("/bookmark", "/bookmark"),
+            ("/unbookmark", "/unbookmark"),
+            ("/buy", "/buy"),
+            ("/buybookmark", "/buybookmark"),
+            ("/confirm", "/confirm"),
+            ("/help", "/help"),
+            ("/cancel", "/cancel"),
+        ]
+        keyboard = [
+            [
+                {"text": label, "callback_data": f"feature:{command}"}
+                for label, command in commands[index:index + 2]
+            ]
+            for index in range(0, len(commands), 2)
+        ]
+        keyboard.append([
+            {"text": "Sembunyikan menu fitur", "callback_data": "menu:hide"}
+        ])
+        return {"inline_keyboard": keyboard}
+
+    def show_feature_menu(self, chat_id: int):
+        self.send_message(
+            chat_id,
+            "Pilih fitur. Untuk fitur yang memerlukan argumen, ikuti format pada petunjuk.",
+            reply_markup=self.feature_menu(),
+        )
+
+    def handle_callback_query(self, query: dict):
+        sender = query.get("from", {})
+        message = query.get("message", {})
+        chat = message.get("chat", {})
+        if (
+            sender.get("id") != self.allowed_user_id
+            or chat.get("id") != self.allowed_user_id
+            or chat.get("type") != "private"
+        ):
+            return
+
+        callback_id = query.get("id")
+        data = query.get("data", "")
+        if data == "menu:show":
+            self.call_api("answerCallbackQuery", callback_query_id=callback_id)
+            self.call_api(
+                "editMessageReplyMarkup",
+                chat_id=chat["id"],
+                message_id=message["message_id"],
+                reply_markup=self.feature_menu(),
+            )
+            return
+        if data == "menu:hide":
+            self.call_api("answerCallbackQuery", callback_query_id=callback_id)
+            self.call_api(
+                "editMessageReplyMarkup",
+                chat_id=chat["id"],
+                message_id=message["message_id"],
+                reply_markup=self.feature_menu(show=False),
+            )
+            return
+
+        command = data.removeprefix("feature:")
+        if command not in {
+            "/login", "/balance", "/packages", "/family", "/bookmarks",
+            "/bookmark", "/unbookmark", "/buy", "/buybookmark", "/confirm",
+            "/help", "/cancel",
+        }:
+            self.call_api("answerCallbackQuery", callback_query_id=callback_id)
+            return
+
+        self.call_api("answerCallbackQuery", callback_query_id=callback_id)
+        self.handle_message({
+            "from": sender,
+            "chat": chat,
+            "text": command,
+        })
 
     def send_photo(self, chat_id: int, image: BytesIO, caption: str):
         image.seek(0)
@@ -91,7 +181,7 @@ class TelegramBot:
                     "getUpdates",
                     offset=self.offset,
                     timeout=30,
-                    allowed_updates=["message"],
+                    allowed_updates=["message", "callback_query"],
                 )
             except (requests.RequestException, RuntimeError, ValueError):
                 logger.warning("Telegram polling failed; retrying")
@@ -101,7 +191,10 @@ class TelegramBot:
             for update in updates:
                 self.offset = update["update_id"] + 1
                 try:
-                    self.handle_message(update.get("message", {}))
+                    if "callback_query" in update:
+                        self.handle_callback_query(update["callback_query"])
+                    else:
+                        self.handle_message(update.get("message", {}))
                 except Exception:
                     logger.error("Failed to process a Telegram message")
 
@@ -125,9 +218,12 @@ class TelegramBot:
         command, _, args = text.partition(" ")
         command = command.split("@", 1)[0].lower()
         args = args.split()
-        if command not in ("/buy", "/buybookmark", "/confirm"):
+        if command not in ("/buy", "/buybookmark", "/confirm", "/menu"):
             self.pending_purchase = None
-        if command == "/family":
+        if command == "/menu":
+            self.login_state = None
+            self.show_feature_menu(chat_id)
+        elif command == "/family":
             self.login_state = None
             self.send_family(chat_id, args)
         elif command == "/bookmark":
@@ -183,6 +279,7 @@ class TelegramBot:
             "/buy <family_code> <no> — pilih paket untuk dibeli\n"
             "/buybookmark <no> — pilih paket bookmark untuk dibeli\n"
             "/confirm [balance|qris|ewallet <dana|shopeepay|gopay|ovo> [nomor]] — pilih pembayaran\n"
+            "/menu — tampilkan menu fitur dengan tombol\n"
             "/cancel — batalkan proses login\n"
             "/help — tampilkan bantuan"
         )
