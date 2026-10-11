@@ -35,6 +35,19 @@ bash setup.sh
 python main.py
 ```
 
+# How to run on an OpenWrt terminal
+1. Connect to the router using SSH or its local terminal and clone this repository.
+2. Enter the repository directory and install the dependencies:
+```
+sh setup.sh
+```
+The setup script installs Python 3 and pip with `opkg` or `apk` if they are missing. Python 3.10 or newer is required.
+3. Start the application in the terminal:
+```
+python3 main.py
+```
+This works in a regular OpenWrt terminal or through ttyd.
+
 # Info
 
 ## PS for Certain Indonesian mobile internet service provider
