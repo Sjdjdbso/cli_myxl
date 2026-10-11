@@ -33,6 +33,7 @@ class TelegramBot:
         self.offset = None
         self.login_state = None
         self.pending_purchase = None
+        self.edit_target = None
 
     def call_api(self, method: str, **data):
         data = {key: value for key, value in data.items() if value is not None}
@@ -50,12 +51,22 @@ class TelegramBot:
     def send_message(self, chat_id: int, text: str, reply_markup=None):
         text = text or "No data available."
         for start in range(0, len(text), MAX_MESSAGE_LENGTH):
-            self.call_api(
-                "sendMessage",
-                chat_id=chat_id,
-                text=text[start:start + MAX_MESSAGE_LENGTH],
-                reply_markup=reply_markup if start == 0 else None,
-            )
+            chunk = text[start:start + MAX_MESSAGE_LENGTH]
+            if self.edit_target and start == 0:
+                self.call_api(
+                    "editMessageText",
+                    chat_id=chat_id,
+                    message_id=self.edit_target["message_id"],
+                    text=chunk,
+                    reply_markup=self.back_menu(),
+                )
+            else:
+                self.call_api(
+                    "sendMessage",
+                    chat_id=chat_id,
+                    text=chunk,
+                    reply_markup=reply_markup if start == 0 else None,
+                )
 
     @staticmethod
     def feature_menu(show: bool = True):
@@ -90,6 +101,14 @@ class TelegramBot:
             {"text": "Sembunyikan menu fitur", "callback_data": "menu:hide"}
         ])
         return {"inline_keyboard": keyboard}
+
+    @staticmethod
+    def back_menu():
+        return {
+            "inline_keyboard": [[
+                {"text": "Kembali ke menu", "callback_data": "menu:return"}
+            ]]
+        }
 
     def show_feature_menu(self, chat_id: int):
         self.send_message(
@@ -130,6 +149,17 @@ class TelegramBot:
             )
             return
 
+        if data == "menu:return":
+            self.call_api("answerCallbackQuery", callback_query_id=callback_id)
+            self.call_api(
+                "editMessageText",
+                chat_id=chat["id"],
+                message_id=message["message_id"],
+                text="Pilih fitur. Untuk fitur yang memerlukan argumen, ikuti format pada petunjuk.",
+                reply_markup=self.feature_menu(),
+            )
+            return
+
         command = data.removeprefix("feature:")
         if command not in {
             "/login", "/balance", "/packages", "/family", "/bookmarks",
@@ -140,11 +170,15 @@ class TelegramBot:
             return
 
         self.call_api("answerCallbackQuery", callback_query_id=callback_id)
-        self.handle_message({
-            "from": sender,
-            "chat": chat,
-            "text": command,
-        })
+        self.edit_target = {"message_id": message["message_id"]}
+        try:
+            self.handle_message({
+                "from": sender,
+                "chat": chat,
+                "text": command,
+            })
+        finally:
+            self.edit_target = None
 
     def send_photo(self, chat_id: int, image: BytesIO, caption: str):
         image.seek(0)
