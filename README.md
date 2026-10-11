@@ -1,62 +1,83 @@
 # MYnyak Engsel Sunset
 
-![banner](bnr.png)
+![Project banner](bnr.png)
 
-CLI client for a certain Indonesian mobile internet service provider.
+An unofficial command-line client for managing MyXL accounts and packages. The interactive menu includes account login and switching, package browsing and purchases, transaction history, family plans, Circle, store listings, notifications, and bookmarks.
 
-# How to get environtment Variables
-Go to [OUR TELEGRAM CHANNEL](https://t.me/alyxcli)
-Copy the provided environment variables and paste it into a text file named `.env` in the same directory as `main.py`.
-You can use nano or any text editor to create the file.
+## Requirements
 
-# How to run with TERMUX
-1. Update & Upgrade Termux
-```
-pkg update && pkg upgrade -y
-```
-2. Install Git
-```
-pkg install git -y
-```
-3. Clone this repo
-```
-git clone https://github.com/purplemashu/me-cli-sunset
-```
-4. Open the folder
-```
-cd me-cli-sunset
-```
-5. Setup
-```
-bash setup.sh
-```
-6. Run the script
-```
-python main.py
+- Python 3.10 or newer
+- pip
+- Termux, Linux, or an OpenWrt system with `opkg` or `apk`
+
+## Setup
+
+Clone this repository and enter its directory:
+
+```sh
+git clone https://github.com/taamarin/cli.git
+cd cli
 ```
 
-# How to run on an OpenWrt terminal
-1. Connect to the router using SSH or its local terminal and clone this repository.
-2. Enter the repository directory and install the dependencies:
+Create a local environment file from the template:
+
+```sh
+cp .env.template .env
 ```
+
+Fill in the configuration values required by your setup. The template contains empty placeholders; obtain configuration values only from a source you trust. Do not share or commit `.env`, API credentials, account tokens, or OTPs.
+
+Install the dependencies:
+
+```sh
 sh setup.sh
 ```
-The setup script installs Python 3 and pip with `opkg` or `apk` if they are missing. Python 3.10 or newer is required.
-3. Start the application in the terminal:
-```
+
+`setup.sh` installs the packages in `requirements.txt`. On supported OpenWrt systems it also attempts to install Python 3 and pip when they are missing.
+
+## Run
+
+From the repository directory, start the application with:
+
+```sh
 python3 main.py
 ```
-This works in a regular OpenWrt terminal or through ttyd.
 
-# Info
+On first launch, choose the account menu and follow the prompts to request and enter an SMS OTP. Saved account tokens are stored locally in `refresh-tokens.json`; protect this file and do not share it.
 
-## PS for Certain Indonesian mobile internet service provider
+## Termux
 
-Instead of just delisting the package from the app, ensure the user cannot purchase it.
-What's the point of strong client side security when the server don't enforce it?
+Install the prerequisites and run the setup:
 
-## Terms of Service
-By using this tool, the user agrees to comply with all applicable laws and regulations and to release the developer from any and all claims arising from its use.
+```sh
+pkg update && pkg upgrade -y
+pkg install git python -y
+git clone https://github.com/taamarin/cli.git
+cd cli
+cp .env.template .env
+```
+
+Fill in `.env`, then run:
+
+```sh
+sh setup.sh
+python3 main.py
+```
+
+## OpenWrt
+
+Connect to the router using SSH or its terminal, clone the repository, and enter its directory. Create and fill in `.env` as described above, then run:
+
+```sh
+sh setup.sh
+python3 main.py
+```
+
+The setup script supports OpenWrt package managers `opkg` and `apk`. Run the application in a regular terminal or through `ttyd`.
+
+## Safety and use
+
+This is an unofficial community project. Use it only with accounts you are authorized to access, and follow applicable laws and service terms. Keep your configuration file and saved account tokens private.
 
 ## Contact
 
