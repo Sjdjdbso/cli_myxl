@@ -57,7 +57,7 @@ The Telegram bot supports login, balance, and active-package queries. It uses th
    python3 telegram_bot.py
    ```
 
-Use `/login` to request and enter an SMS OTP, `/balance` to check your balance, and `/packages` to list active packages. Keep the bot token and account-token file private. Do not run the bot and CLI simultaneously because they share account state.
+Use `/login` to request and enter an SMS OTP, `/balance` to check your balance, and `/packages` to list active packages. Use `/family <family_code>` to list options, `/bookmark <family_code> <no>`, `/bookmarks`, `/unbookmark <no>` to manage bookmarks, and `/buy <family_code> <no>` or `/buybookmark <no>` followed by `/confirm` to buy with balance. Keep the bot token and account-token file private. Do not run the bot and CLI simultaneously because they share account state.
 
 ## Termux
 
