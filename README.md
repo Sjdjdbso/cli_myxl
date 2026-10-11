@@ -47,7 +47,7 @@ On first launch, choose the account menu and follow the prompts to request and e
 
 ## Telegram bot
 
-The Telegram bot supports login, balance, and active-package queries. It uses the existing MyXL API client and stores account tokens in the same local `refresh-tokens.json` file as the CLI.
+The Telegram bot supports login, balance, package browsing, and package purchases using balance, E-Wallet, or QRIS. QRIS payments are sent as a scannable photo in Telegram. It uses the existing MyXL API client and stores account tokens in the same local `refresh-tokens.json` file as the CLI.
 
 1. Create a bot with Telegram's BotFather and set `TELEGRAM_BOT_TOKEN` in `.env`.
 2. Set `TELEGRAM_ALLOWED_USER_ID` to your numeric Telegram user ID. The bot only responds to that user in a private chat.
@@ -57,7 +57,7 @@ The Telegram bot supports login, balance, and active-package queries. It uses th
    python3 telegram_bot.py
    ```
 
-Use `/login` to request and enter an SMS OTP, `/balance` to check your balance, and `/packages` to list active packages. Use `/family <family_code>` to list options, `/bookmark <family_code> <no>`, `/bookmarks`, `/unbookmark <no>` to manage bookmarks, and `/buy <family_code> <no>` or `/buybookmark <no>` followed by `/confirm` to buy with balance. Keep the bot token and account-token file private. Do not run the bot and CLI simultaneously because they share account state.
+Use `/login` to request and enter an SMS OTP, `/balance` to check your balance, and `/packages` to list active packages. Use `/family <family_code>` to list options, `/bookmark <family_code> <no>`, `/bookmarks`, and `/unbookmark <no>` to manage bookmarks. Start a purchase with `/buy <family_code> <no>` or `/buybookmark <no>`, then choose `/confirm balance`, `/confirm qris`, or `/confirm ewallet <dana|shopeepay|gopay|ovo> [nomor]`. DANA and OVO require a phone number; QRIS sends the payment code as a photo to scan. Keep the bot token and account-token file private. Do not run the bot and CLI simultaneously because they share account state.
 
 ## Termux
 

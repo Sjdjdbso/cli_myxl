@@ -3,8 +3,9 @@ import os
 import time
 from contextlib import redirect_stdout
 from datetime import datetime
-from io import StringIO
+from io import BytesIO, StringIO
 
+import qrcode
 import requests
 from dotenv import load_dotenv
 
@@ -13,6 +14,8 @@ load_dotenv()
 from app.client.ciam import get_otp, submit_otp
 from app.client.engsel import get_balance, get_family, get_package_details, send_api_request
 from app.client.purchase.balance import settlement_balance
+from app.client.purchase.ewallet import settlement_multipayment
+from app.client.purchase.qris import get_qris_code, settlement_qris
 from app.menus.util import format_quota_byte
 from app.service.auth import AuthInstance
 from app.service.bookmark import BookmarkInstance
@@ -52,6 +55,19 @@ class TelegramBot:
                 chat_id=chat_id,
                 text=text[start:start + MAX_MESSAGE_LENGTH],
             )
+
+    def send_photo(self, chat_id: int, image: BytesIO, caption: str):
+        image.seek(0)
+        response = requests.post(
+            f"{self.api_url}/sendPhoto",
+            data={"chat_id": chat_id, "caption": caption},
+            files={"photo": ("qris.png", image, "image/png")},
+            timeout=35,
+        )
+        response.raise_for_status()
+        result = response.json()
+        if not result.get("ok"):
+            raise RuntimeError("Telegram photo request failed")
 
     def delete_message(self, chat_id: int, message_id: int):
         try:
@@ -131,7 +147,7 @@ class TelegramBot:
             self.request_buy_bookmark(chat_id, args)
         elif command == "/confirm":
             self.login_state = None
-            self.confirm_purchase(chat_id)
+            self.confirm_purchase(chat_id, args)
         elif command in ("/start", "/help"):
             self.login_state = None
             self.send_message(chat_id, self.help_text())
@@ -164,8 +180,9 @@ class TelegramBot:
             "/bookmark <family_code> <no> — simpan paket ke bookmark\n"
             "/bookmarks — lihat bookmark\n"
             "/unbookmark <no> — hapus bookmark\n"
-            "/buy <family_code> <no> — beli paket (pulsa), lalu /confirm\n"
-            "/buybookmark <no> — beli paket dari bookmark, lalu /confirm\n"
+            "/buy <family_code> <no> — pilih paket untuk dibeli\n"
+            "/buybookmark <no> — pilih paket bookmark untuk dibeli\n"
+            "/confirm [balance|qris|ewallet <dana|shopeepay|gopay|ovo> [nomor]] — pilih pembayaran\n"
             "/cancel — batalkan proses login\n"
             "/help — tampilkan bantuan"
         )
@@ -465,10 +482,52 @@ class TelegramBot:
         self.send_message(
             chat_id,
             f"Beli {option['variant_name']} - {option['name']} (Rp {option['price']}) "
-            "dengan pulsa?\nKetik /confirm untuk melanjutkan atau /cancel.",
+            "Pilih pembayaran dengan /confirm balance, /confirm qris, atau "
+            "/confirm ewallet <dana|shopeepay|gopay|ovo> [nomor].\n"
+            "Untuk DANA dan OVO, sertakan nomor ponsel. Gunakan /cancel untuk membatalkan.",
         )
 
-    def confirm_purchase(self, chat_id: int):
+    def confirm_purchase(self, chat_id: int, args: list = None):
+        args = args or []
+        payment_type = args[0].lower() if args else "balance"
+        wallet_method = ""
+        wallet_number = ""
+        if payment_type == "ewallet":
+            if len(args) not in (2, 3):
+                self.send_message(
+                    chat_id,
+                    "Format: /confirm ewallet <dana|shopeepay|gopay|ovo> [nomor].",
+                )
+                return
+            wallet_method = args[1].upper()
+            if wallet_method not in ("DANA", "SHOPEEPAY", "GOPAY", "OVO"):
+                self.send_message(chat_id, "Metode E-Wallet tidak valid.")
+                return
+            needs_number = wallet_method in ("DANA", "OVO")
+            if needs_number != (len(args) == 3):
+                self.send_message(
+                    chat_id,
+                    f"Nomor ponsel {'wajib' if needs_number else 'tidak diperlukan'} "
+                    f"untuk {wallet_method}.",
+                )
+                return
+            if needs_number:
+                wallet_number = args[2]
+                if (
+                    not wallet_number.startswith("08")
+                    or not wallet_number.isdigit()
+                    or not 10 <= len(wallet_number) <= 13
+                ):
+                    self.send_message(chat_id, "Nomor ponsel harus diawali 08 dan terdiri dari 10-13 digit.")
+                    return
+        elif payment_type not in ("balance", "qris") or len(args) > 1:
+            self.send_message(
+                chat_id,
+                "Pilih /confirm balance, /confirm qris, atau "
+                "/confirm ewallet <dana|shopeepay|gopay|ovo> [nomor].",
+            )
+            return
+
         pending, self.pending_purchase = self.pending_purchase, None
         if not pending:
             self.send_message(chat_id, "Tidak ada pembelian yang menunggu konfirmasi.")
@@ -501,19 +560,72 @@ class TelegramBot:
                         token_confirmation=detail["token_confirmation"],
                     )
                 ]
-                res = settlement_balance(
-                    AuthInstance.api_key,
-                    tokens,
-                    items,
-                    "BUY_PACKAGE",
-                    False,
-                    overwrite_amount=opt["price"],
-                    token_confirmation_idx=0,
-                )
+                payment_for = detail["package_family"].get("payment_for") or "BUY_PACKAGE"
+                if payment_type == "balance":
+                    res = settlement_balance(
+                        AuthInstance.api_key,
+                        tokens,
+                        items,
+                        payment_for,
+                        False,
+                        overwrite_amount=opt["price"],
+                        token_confirmation_idx=0,
+                    )
+                elif payment_type == "ewallet":
+                    res = settlement_multipayment(
+                        AuthInstance.api_key,
+                        tokens,
+                        items,
+                        wallet_number,
+                        wallet_method,
+                        payment_for,
+                        False,
+                        overwrite_amount=opt["price"],
+                        token_confirmation_idx=0,
+                    )
+                else:
+                    transaction_id = settlement_qris(
+                        AuthInstance.api_key,
+                        tokens,
+                        items,
+                        payment_for,
+                        False,
+                        overwrite_amount=opt["price"],
+                        token_confirmation_idx=0,
+                    )
+                    qris_code = (
+                        get_qris_code(AuthInstance.api_key, tokens, transaction_id)
+                        if transaction_id
+                        else None
+                    )
+                    if qris_code:
+                        qr = qrcode.QRCode(
+                            error_correction=qrcode.constants.ERROR_CORRECT_M,
+                            box_size=8,
+                            border=4,
+                        )
+                        qr.add_data(qris_code)
+                        qr.make(fit=True)
+                        image = BytesIO()
+                        qr.make_image(fill_color="black", back_color="white").save(image, format="PNG")
+                        self.send_photo(
+                            chat_id,
+                            image,
+                            f"QRIS untuk pembayaran {option['name']} (Rp {opt['price']}).",
+                        )
+                        return
+                    res = None
         except Exception:
             res = None
         if isinstance(res, dict) and res.get("status") == "SUCCESS":
-            self.send_message(chat_id, f"Pembelian {option['name']} berhasil.")
+            if payment_type == "balance":
+                self.send_message(chat_id, f"Pembelian {option['name']} berhasil.")
+            else:
+                deeplink = res.get("data", {}).get("deeplink", "")
+                message = f"Pembayaran {option['name']} dibuat melalui {wallet_method}."
+                if deeplink:
+                    message += f"\nSelesaikan pembayaran di sini:\n{deeplink}"
+                self.send_message(chat_id, message)
         else:
             msg = res.get("message", "") if isinstance(res, dict) else ""
             self.send_message(chat_id, f"Pembelian gagal. {msg}".strip())
