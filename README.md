@@ -35,6 +35,18 @@ bash setup.sh
 python main.py
 ```
 
+# How to run on OpenWrt with ttyd
+1. Install Python 3 and pip using the OpenWrt package manager.
+2. Clone this repository and enter its directory.
+3. Install the Python dependencies:
+```
+sh setup.sh
+```
+4. Start the application from the repository directory:
+```
+python3 main.py
+```
+
 # Info
 
 ## PS for Certain Indonesian mobile internet service provider
