@@ -606,17 +606,25 @@ class TelegramBot:
                         )
                         qr.add_data(qris_code)
                         qr.make(fit=True)
-                        image = BytesIO()
-                        from qrcode.image.pil import PilImage
+                        caption = f"QRIS untuk pembayaran {option['name']} (Rp {opt['price']})."
+                        try:
+                            from qrcode.image.pil import PilImage
 
-                        qr.make_image(
-                            image_factory=PilImage, fill_color="black", back_color="white"
-                        ).save(image, format="PNG")
-                        self.send_photo(
-                            chat_id,
-                            image,
-                            f"QRIS untuk pembayaran {option['name']} (Rp {opt['price']}).",
-                        )
+                            image = BytesIO()
+                            qr.make_image(
+                                image_factory=PilImage,
+                                fill_color="black",
+                                back_color="white",
+                            ).save(image, format="PNG")
+                        except ImportError:
+                            logging.warning("Pillow not installed; sending QRIS as text")
+                            self.send_message(
+                                chat_id,
+                                f"{caption}\nKode QRIS:\n{qris_code}\n"
+                                "(Install Pillow: pip install pillow untuk menampilkan gambar QR.)",
+                            )
+                            return
+                        self.send_photo(chat_id, image, caption)
                         return
                     res = None
         except Exception:
