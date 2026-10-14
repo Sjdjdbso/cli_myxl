@@ -1,7 +1,5 @@
 # MyEXL
 
-![Project banner](bnr.png)
-
 An unofficial command-line client for managing MyXL accounts and packages. The interactive menu includes account login and switching, package browsing and purchases, transaction history, family plans, Circle, store listings, notifications, and bookmarks.
 
 ## Requirements
