@@ -87,6 +87,8 @@ class TelegramBot:
             ("/buy", "/buy"),
             ("/buybookmark", "/buybookmark"),
             ("/confirm", "/confirm"),
+            ("/accounts", "/accounts"),
+            ("/switch", "/switch"),
             ("/help", "/help"),
             ("/cancel", "/cancel"),
         ]
@@ -164,7 +166,7 @@ class TelegramBot:
         if command not in {
             "/login", "/balance", "/packages", "/family", "/bookmarks",
             "/bookmark", "/unbookmark", "/buy", "/buybookmark", "/confirm",
-            "/help", "/cancel",
+            "/accounts", "/switch", "/help", "/cancel",
         }:
             self.call_api("answerCallbackQuery", callback_query_id=callback_id)
             return
@@ -311,6 +313,12 @@ class TelegramBot:
         elif command == "/packages":
             self.login_state = None
             self.send_packages(chat_id)
+        elif command == "/accounts":
+            self.login_state = None
+            self.send_accounts(chat_id)
+        elif command == "/switch":
+            self.login_state = None
+            self.switch_account(chat_id, args)
         elif self.login_state:
             self.handle_login(chat_id, message, text)
         else:
@@ -330,10 +338,45 @@ class TelegramBot:
             "/buy <family_code> <no> — pilih paket untuk dibeli\n"
             "/buybookmark <no> — pilih paket bookmark untuk dibeli\n"
             "/confirm [balance|qris|ewallet <dana|shopeepay|gopay|ovo> [nomor]] — pilih pembayaran\n"
+            "/accounts — lihat daftar nomor tersimpan\n"
+            "/switch <nomor> — ganti akun aktif\n"
             "/menu — tampilkan menu fitur dengan tombol\n"
             "/cancel — batalkan proses login\n"
             "/help — tampilkan bantuan"
         )
+
+    def send_accounts(self, chat_id: int):
+        tokens = AuthInstance.refresh_tokens
+        if not tokens:
+            self.send_message(chat_id, "Belum ada nomor tersimpan. Gunakan /login.")
+            return
+        active = AuthInstance.active_user
+        active_number = active["number"] if active else None
+        lines = ["Nomor tersimpan:"]
+        for index, rt in enumerate(tokens, start=1):
+            marker = " (aktif)" if rt["number"] == active_number else ""
+            lines.append(f"{index}. {rt['number']}{marker}")
+        lines.append("")
+        lines.append("Ganti akun: /switch <nomor>")
+        self.send_message(chat_id, "\n".join(lines))
+
+    def switch_account(self, chat_id: int, args: list):
+        if not args or not args[0].isdigit():
+            self.send_message(chat_id, "Format: /switch <nomor> (contoh: /switch 6281234567890)")
+            return
+        number = int(args[0])
+        if not any(rt["number"] == number for rt in AuthInstance.refresh_tokens):
+            self.send_message(chat_id, f"Nomor {number} tidak ada di daftar. Lihat /accounts.")
+            return
+        try:
+            with redirect_stdout(StringIO()):
+                ok = AuthInstance.set_active_user(number)
+        except EOFError:
+            ok = False
+        if ok is False:
+            self.send_message(chat_id, f"Gagal ganti ke {number}. Refresh token mungkin kedaluwarsa — login ulang dengan /login.")
+            return
+        self.send_message(chat_id, f"Akun aktif sekarang: {number}. Gunakan /balance atau /packages.")
 
     def handle_login(self, chat_id: int, message: dict, text: str):
         if self.login_state["step"] == "phone":
