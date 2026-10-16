@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import time
@@ -149,6 +150,10 @@ class TelegramBot:
                     {"text": "Bookmark", "callback_data": "view:bookmarks"},
                 ],
                 [
+                    {"text": "Riwayat", "callback_data": "view:history"},
+                    {"text": "Masa aktif", "callback_data": "view:masaaktif"},
+                ],
+                [
                     {"text": "Beli paket", "callback_data": "help:buy"},
                     {"text": "Bantuan", "callback_data": "view:help"},
                 ],
@@ -224,7 +229,11 @@ class TelegramBot:
                 "packages": lambda: (self.packages_text(), self.back_menu()),
                 "bookmarks": lambda: (self.bookmarks_text(), self.back_menu()),
                 "help": lambda: (self.help_text(), self.back_menu()),
+                "masaaktif": lambda: self.masa_aktif_text(),
             }.get(view, lambda: (None, None))()
+            if view == "history":
+                self.call_api("editMessageText", chat_id=chat["id"], message_id=message["message_id"], text=self.history_text(), reply_markup=self.back_menu())
+                return
             if view == "accounts":
                 text, markup = self.accounts_screen()
             if text is None:
@@ -425,6 +434,12 @@ class TelegramBot:
         elif command == "/packages":
             self.login_state = None
             self.send_packages(chat_id)
+        elif command == "/history":
+            self.login_state = None
+            self.send_history(chat_id)
+        elif command == "/masaaktif":
+            self.login_state = None
+            self.send_masa_aktif(chat_id, args)
         elif command == "/accounts":
             self.login_state = None
             self.send_accounts(chat_id)
@@ -450,6 +465,8 @@ class TelegramBot:
             "/buy <family_code> <no> — pilih paket untuk dibeli\n"
             "/buybookmark <no> — pilih paket bookmark untuk dibeli\n"
             "/confirm [balance|qris|ewallet <dana|shopeepay|gopay|ovo> [nomor]] — pilih pembayaran\n"
+            "/history — riwayat transaksi\n"
+            "/masaaktif <no> — beli perpanjangan masa aktif (lihat opsi tanpa <no>)\n"
             "/accounts — lihat daftar nomor tersimpan\n"
             "/switch <nomor> — ganti akun aktif\n"
             "/menu — tampilkan menu fitur dengan tombol\n"
@@ -547,6 +564,131 @@ class TelegramBot:
         for index, bm in enumerate(bookmarks, start=1):
             lines.append(f"{index}. {bm.get('family_name', '?')} — {bm.get('option_name', '?')}")
         return "\n".join(lines)
+
+    def history_text(self):
+        user = self.active_user()
+        if not user:
+            return "Belum ada akun aktif. Login dulu: /login"
+        from app.client.engsel import get_transaction_history
+        try:
+            with redirect_stdout(StringIO()):
+                data = get_transaction_history(AuthInstance.api_key, user["tokens"])
+        except Exception:
+            data = None
+        history = data.get("list", []) if isinstance(data, dict) else []
+        if not history:
+            return "Belum ada transaksi."
+        lines = ["Riwayat transaksi:"]
+        for t in history[:15]:
+            ts = t.get("timestamp", 0)
+            try:
+                when = datetime.fromtimestamp(int(ts)).strftime("%d %b %Y %H:%M")
+            except (TypeError, ValueError, OSError, OverflowError):
+                when = "?"
+            lines.append(
+                f"\n{t.get('title', '?')} — {t.get('price', '?')}\n"
+                f"{when} · {t.get('payment_method_label', '?')} · {t.get('status', '?')}"
+            )
+        return "\n".join(lines)
+
+    def masa_aktif_text(self):
+        try:
+            with open("hot_data/hot2.json", "r", encoding="utf-8") as f:
+                hot = json.load(f)
+        except Exception:
+            hot = []
+        if not hot:
+            return "Opsi masa aktif tidak tersedia."
+        lines = ["Opsi masa aktif:"]
+        for index, h in enumerate(hot, start=1):
+            lines.append(f"{index}. {h.get('name', '?')} — {h.get('price', '?')}")
+        lines.append("\nBeli: /masaaktif <no>")
+        return "\n".join(lines)
+
+    def send_history(self, chat_id: int):
+        self.send_message(chat_id, self.history_text())
+
+    def send_masa_aktif(self, chat_id: int, args: list):
+        user = self.active_user()
+        if not user:
+            self.send_message(chat_id, "Belum ada akun aktif. Login dulu: /login")
+        else:
+            try:
+                with open("hot_data/hot2.json", "r", encoding="utf-8") as f:
+                    hot = json.load(f)
+            except Exception:
+                hot = []
+            if not (0 < len(args or []) <= 1) or not hot:
+                lines = ["Opsi masa aktif:"]
+                for index, h in enumerate(hot, start=1):
+                    lines.append(f"{index}. {h.get('name', '?')} — {h.get('price', '?')}")
+                lines.append("\nBeli: /masaaktif <no>")
+                self.send_message(chat_id, "\n".join(lines))
+                return
+            idx = self.parse_index(args[0], len(hot))
+            if idx is None:
+                self.send_message(chat_id, f"Nomor harus 1-{len(hot)}.")
+                return
+            selected = hot[idx]
+            packages = selected.get("packages", [])
+            if not packages:
+                self.send_message(chat_id, "Paket tidak tersedia.")
+                return
+            tokens = user["tokens"]
+            items = []
+            main_detail = None
+            try:
+                with redirect_stdout(StringIO()):
+                    for package in packages:
+                        detail = get_package_details(
+                            AuthInstance.api_key,
+                            tokens,
+                            package["family_code"],
+                            package["variant_code"],
+                            package["order"],
+                            package["is_enterprise"],
+                            package["migration_type"],
+                        )
+                        if not detail:
+                            raise RuntimeError(f"Gagal ambil detail {package['family_code']}")
+                        if package is packages[0]:
+                            main_detail = detail
+                        opt = detail["package_option"]
+                        items.append(
+                            PaymentItem(
+                                item_code=opt["package_option_code"],
+                                product_type="",
+                                item_price=opt["price"],
+                                item_name=opt["name"],
+                                tax=0,
+                                token_confirmation=detail["token_confirmation"],
+                            )
+                        )
+            except Exception as e:
+                self.send_message(chat_id, f"Gagal menyiapkan pembelian: {e}")
+                return
+            self.pending_purchase = {
+                "family_code": packages[0]["family_code"],
+                "option": {
+                    "name": selected.get("name", "Masa Aktif"),
+                    "price": main_detail["package_option"]["price"],
+                    "variant_code": packages[0]["variant_code"],
+                    "order": packages[0]["order"],
+                },
+                "hot_items": items,
+                "hot_meta": {
+                    "payment_for": selected.get("payment_for", "BUY_PACKAGE"),
+                    "ask_overwrite": selected.get("ask_overwrite", False),
+                    "overwrite_amount": selected.get("overwrite_amount", -1),
+                    "token_confirmation_idx": selected.get("token_confirmation_idx", 0),
+                    "amount_idx": selected.get("amount_idx", -1),
+                },
+            }
+            self.send_message(
+                chat_id,
+                f"Beli {selected.get('name')} ({selected.get('price')}). "
+                "Pilih: /confirm balance atau /confirm qris. /cancel buat batal.",
+            )
 
     def send_accounts(self, chat_id: int):
         text, markup = self.accounts_screen()
@@ -898,6 +1040,84 @@ class TelegramBot:
             return
         option = pending["option"]
         tokens = user["tokens"]
+        if pending.get("hot_items"):
+            meta = pending.get("hot_meta", {})
+            try:
+                with redirect_stdout(StringIO()):
+                    items = pending["hot_items"]
+                    payment_for = meta.get("payment_for", "BUY_PACKAGE")
+                    ow = meta.get("overwrite_amount", -1)
+                    if payment_type == "balance":
+                        res = settlement_balance(
+                            AuthInstance.api_key,
+                            tokens,
+                            items,
+                            payment_for,
+                            meta.get("ask_overwrite", False),
+                            overwrite_amount=ow,
+                            token_confirmation_idx=meta.get("token_confirmation_idx", 0),
+                            amount_idx=meta.get("amount_idx", -1),
+                        )
+                    elif payment_type == "ewallet":
+                        res = settlement_multipayment(
+                            AuthInstance.api_key,
+                            tokens,
+                            items,
+                            wallet_number,
+                            wallet_method,
+                            payment_for,
+                            meta.get("ask_overwrite", False),
+                            overwrite_amount=ow,
+                            token_confirmation_idx=meta.get("token_confirmation_idx", 0),
+                            amount_idx=meta.get("amount_idx", -1),
+                        )
+                    else:
+                        transaction_id = settlement_qris(
+                            AuthInstance.api_key,
+                            tokens,
+                            items,
+                            payment_for,
+                            meta.get("ask_overwrite", False),
+                            overwrite_amount=ow,
+                            token_confirmation_idx=meta.get("token_confirmation_idx", 0),
+                            amount_idx=meta.get("amount_idx", -1),
+                        )
+                        qris_code = (
+                            get_qris_code(AuthInstance.api_key, tokens, transaction_id)
+                            if transaction_id
+                            else None
+                        )
+                        if qris_code:
+                            qr = qrcode.QRCode(
+                                error_correction=qrcode.constants.ERROR_CORRECT_M,
+                                box_size=8,
+                                border=4,
+                            )
+                            qr.add_data(qris_code)
+                            qr.make(fit=True)
+                            caption = f"QRIS pembayaran {option['name']}."
+                            image = BytesIO()
+                            from qrcode.image.pil import PilImage
+                            qr.make_image(image_factory=PilImage, fill_color="black", back_color="white").save(image, format="PNG")
+                            self.send_photo(chat_id, image, caption)
+                            return
+                        res = None
+            except Exception:
+                logging.exception("Hot purchase failed")
+                res = None
+            if isinstance(res, dict) and res.get("status") == "SUCCESS":
+                if payment_type == "balance":
+                    self.send_message(chat_id, f"Pembelian {option['name']} berhasil.")
+                else:
+                    deeplink = res.get("data", {}).get("deeplink", "")
+                    message = f"Pembayaran {option['name']} dibuat."
+                    if deeplink:
+                        message += f"\nSelesaikan di sini:\n{deeplink}"
+                    self.send_message(chat_id, message)
+            else:
+                msg = res.get("message", "") if isinstance(res, dict) else ""
+                self.send_message(chat_id, f"Pembelian gagal. {msg}".strip())
+            return
         try:
             with redirect_stdout(StringIO()):
                 detail = get_package_details(
