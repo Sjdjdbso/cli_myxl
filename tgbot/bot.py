@@ -367,7 +367,7 @@ class TelegramBot:
                     else:
                         self.handle_message(update.get("message", {}))
                 except Exception:
-                    logger.error("Failed to process a Telegram message")
+                    logger.exception("Failed to process a Telegram message")
 
     def handle_message(self, message: dict):
         sender = message.get("from", {})
