@@ -229,7 +229,7 @@ class TelegramBot:
                 "packages": lambda: (self.packages_text(), self.back_menu()),
                 "bookmarks": lambda: (self.bookmarks_text(), self.back_menu()),
                 "help": lambda: (self.help_text(), self.back_menu()),
-                "masaaktif": lambda: self.masa_aktif_text(),
+                "masaaktif": lambda: (self.masa_aktif_text(), self.back_menu()),
             }.get(view, lambda: (None, None))()
             if view == "history":
                 self.call_api("editMessageText", chat_id=chat["id"], message_id=message["message_id"], text=self.history_text(), reply_markup=self.back_menu())
