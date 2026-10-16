@@ -108,8 +108,51 @@ class TelegramBot:
     def back_menu():
         return {
             "inline_keyboard": [[
-                {"text": "Kembali ke menu", "callback_data": "menu:return"}
+                {"text": "Kembali", "callback_data": "menu:home"}
             ]]
+        }
+
+    @staticmethod
+    def home_text():
+        user = None
+        try:
+            user = AuthInstance.get_active_user()
+        except Exception:
+            user = None
+        if user:
+            try:
+                balance = get_balance(AuthInstance.api_key, user["tokens"]["id_token"])
+            except Exception:
+                balance = None
+            if isinstance(balance, dict):
+                try:
+                    expired_text = datetime.fromtimestamp(float(balance.get("expired_at"))).strftime("%d %b %Y")
+                except (TypeError, ValueError, OSError, OverflowError):
+                    expired_text = "?"
+                return (
+                    f"MyXL Bot — {user['number']}\n"
+                    f"Pulsa Rp{balance.get('remaining', '?')} · aktif s.d. {expired_text}"
+                )
+            return f"MyXL Bot — {user['number']}"
+        return "MyXL Bot. Login dulu ya."
+
+    @classmethod
+    def home_keyboard(cls):
+        return {
+            "inline_keyboard": [
+                [
+                    {"text": "Pulsa", "callback_data": "view:balance"},
+                    {"text": "Paket", "callback_data": "view:packages"},
+                ],
+                [
+                    {"text": "Akun", "callback_data": "view:accounts"},
+                    {"text": "Bookmark", "callback_data": "view:bookmarks"},
+                ],
+                [
+                    {"text": "Beli paket", "callback_data": "help:buy"},
+                    {"text": "Bantuan", "callback_data": "view:help"},
+                ],
+            ]
         }
 
     def show_feature_menu(self, chat_id: int):
@@ -159,6 +202,72 @@ class TelegramBot:
                 message_id=message["message_id"],
                 text="Pilih fitur. Untuk fitur yang memerlukan argumen, ikuti format pada petunjuk.",
                 reply_markup=self.feature_menu(),
+            )
+            return
+
+        if data == "menu:home":
+            self.call_api("answerCallbackQuery", callback_query_id=callback_id)
+            self.call_api(
+                "editMessageText",
+                chat_id=chat["id"],
+                message_id=message["message_id"],
+                text=self.home_text(),
+                reply_markup=self.home_keyboard(),
+            )
+            return
+
+        if data.startswith("view:"):
+            self.call_api("answerCallbackQuery", callback_query_id=callback_id)
+            view = data.split(":", 1)[1]
+            text, markup = {
+                "balance": lambda: (self.balance_text(), self.home_keyboard()),
+                "packages": lambda: (self.packages_text(), self.back_menu()),
+                "bookmarks": lambda: (self.bookmarks_text(), self.back_menu()),
+                "help": lambda: (self.help_text(), self.back_menu()),
+            }.get(view, lambda: (None, None))()
+            if view == "accounts":
+                text, markup = self.accounts_screen()
+            if text is None:
+                return
+            if text is None:
+                return
+            self.call_api(
+                "editMessageText",
+                chat_id=chat["id"],
+                message_id=message["message_id"],
+                text=text,
+                reply_markup=markup,
+            )
+            return
+
+        if data.startswith("help:"):
+            self.call_api("answerCallbackQuery", callback_query_id=callback_id)
+            topic = data.split(":", 1)[1]
+            tips = {"buy": "Ketik /family <family_code> untuk lihat opsi, lalu /buy <family_code> <no>."}
+            self.call_api(
+                "editMessageText",
+                chat_id=chat["id"],
+                message_id=message["message_id"],
+                text=tips.get(topic, self.help_text()),
+                reply_markup=self.back_menu(),
+            )
+            return
+
+        if data.startswith("acc:"):
+            self.call_api("answerCallbackQuery", callback_query_id=callback_id)
+            number = int(data.split(":", 1)[1])
+            try:
+                with redirect_stdout(StringIO()):
+                    ok = AuthInstance.set_active_user(number)
+            except EOFError:
+                ok = False
+            text = f"Aktif sekarang: {number}" if ok is not False else f"Gagal pindah ke {number}. Coba /login ulang."
+            self.call_api(
+                "editMessageText",
+                chat_id=chat["id"],
+                message_id=message["message_id"],
+                text=text,
+                reply_markup=self.back_menu(),
             )
             return
 
@@ -275,7 +384,7 @@ class TelegramBot:
             self.pending_purchase = None
         if command == "/menu":
             self.login_state = None
-            self.show_feature_menu(chat_id)
+            self.send_message(chat_id, self.home_text(), reply_markup=self.home_keyboard())
         elif command == "/family":
             self.login_state = None
             self.send_family(chat_id, args)
@@ -297,7 +406,10 @@ class TelegramBot:
         elif command == "/confirm":
             self.login_state = None
             self.confirm_purchase(chat_id, args)
-        elif command in ("/start", "/help"):
+        elif command == "/start":
+            self.login_state = None
+            self.send_message(chat_id, self.home_text(), reply_markup=self.home_keyboard())
+        elif command == "/help":
             self.login_state = None
             self.send_message(chat_id, self.help_text())
         elif command == "/cancel":
@@ -345,20 +457,100 @@ class TelegramBot:
             "/help — tampilkan bantuan"
         )
 
-    def send_accounts(self, chat_id: int):
+    def balance_text(self):
+        user = self.active_user()
+        if not user:
+            return "Belum ada akun aktif. Login dulu: /login"
+        try:
+            balance = get_balance(AuthInstance.api_key, user["tokens"]["id_token"])
+        except Exception:
+            balance = None
+        if not isinstance(balance, dict):
+            return "Gagal ambil data pulsa, coba lagi ntar."
+        try:
+            expired_text = datetime.fromtimestamp(float(balance.get("expired_at"))).strftime("%d %b %Y")
+        except (TypeError, ValueError, OSError, OverflowError):
+            expired_text = "?"
+        return f"Pulsa lo Rp{balance.get('remaining', '?')} · aktif sampai {expired_text}"
+
+    def packages_text(self):
+        user = self.active_user()
+        if not user:
+            return "Belum ada akun aktif. Login dulu: /login"
+        try:
+            response = send_api_request(
+                AuthInstance.api_key,
+                "api/v8/packages/quota-details",
+                {"is_enterprise": False, "lang": "en", "family_member_id": ""},
+                user["tokens"]["id_token"],
+                "POST",
+            )
+        except Exception:
+            response = None
+        if not isinstance(response, dict) or response.get("status") != "SUCCESS":
+            return "Gagal ambil daftar paket."
+        data = response.get("data")
+        quotas = data.get("quotas", []) if isinstance(data, dict) else []
+        if not quotas:
+            return "Nggak ada paket aktif."
+        lines = ["Paket aktif:"]
+        for quota in quotas:
+            if not isinstance(quota, dict):
+                continue
+            lines.append(f"\n{quota.get('name', 'Paket tanpa nama')}")
+            for benefit in quota.get("benefits") or []:
+                if not isinstance(benefit, dict):
+                    continue
+                name = benefit.get("name", benefit.get("data_type", "Kuota"))
+                data_type = benefit.get("data_type", "")
+                remaining = benefit.get("remaining", 0)
+                total = benefit.get("total", 0)
+                if data_type == "DATA":
+                    remaining = format_quota_byte(int(remaining or 0))
+                    total = format_quota_byte(int(total or 0))
+                elif data_type == "VOICE":
+                    remaining = f"{float(remaining or 0) / 60:.0f} mnt"
+                    total = f"{float(total or 0) / 60:.0f} mnt"
+                elif data_type == "TEXT":
+                    remaining = f"{remaining} SMS"
+                    total = f"{total} SMS"
+                lines.append(f"{name}: {remaining} / {total}")
+        return "\n".join(lines)
+
+    def accounts_text(self):
         tokens = AuthInstance.refresh_tokens
         if not tokens:
-            self.send_message(chat_id, "Belum ada nomor tersimpan. Gunakan /login.")
-            return
+            return "Belum ada nomor tersimpan. Login dulu: /login"
+        return tokens
+
+    def accounts_screen(self):
+        tokens = AuthInstance.refresh_tokens
+        if not tokens:
+            return "Belum ada nomor tersimpan. Login dulu: /login", self.back_menu()
         active = AuthInstance.active_user
         active_number = active["number"] if active else None
-        lines = ["Nomor tersimpan:"]
-        for index, rt in enumerate(tokens, start=1):
-            marker = " (aktif)" if rt["number"] == active_number else ""
-            lines.append(f"{index}. {rt['number']}{marker}")
-        lines.append("")
-        lines.append("Ganti akun: /switch <nomor>")
-        self.send_message(chat_id, "\n".join(lines))
+        rows = []
+        for rt in tokens:
+            label = f"{rt['number']}" + (" (aktif)" if rt["number"] == active_number else "")
+            rows.append([{"text": label, "callback_data": f"acc:{rt['number']}"}])
+        rows.append([{"text": "Kembali", "callback_data": "menu:home"}])
+        return "Pilih nomor buat ganti akun:", {"inline_keyboard": rows}
+
+    def bookmarks_text(self):
+        try:
+            bookmarks = BookmarkInstance.get_bookmarks()
+        except Exception:
+            bookmarks = []
+        if not bookmarks:
+            return "Belum ada bookmark."
+        lines = ["Bookmark lo:"]
+        for index, bm in enumerate(bookmarks, start=1):
+            lines.append(f"{index}. {bm.get('family_name', '?')} — {bm.get('option_name', '?')}")
+        return "\n".join(lines)
+
+    def send_accounts(self, chat_id: int):
+        text, markup = self.accounts_screen()
+        self.send_message(chat_id, text, reply_markup=markup)
 
     def switch_account(self, chat_id: int, args: list):
         if not args or not args[0].isdigit():
@@ -447,30 +639,7 @@ class TelegramBot:
             return None
 
     def send_balance(self, chat_id: int):
-        user = self.active_user()
-        if not user:
-            self.send_message(chat_id, "Belum ada akun aktif. Gunakan /login terlebih dahulu.")
-            return
-
-        try:
-            balance = get_balance(AuthInstance.api_key, user["tokens"]["id_token"])
-        except Exception:
-            balance = None
-        if not isinstance(balance, dict):
-            self.send_message(chat_id, "Gagal mengambil informasi pulsa.")
-            return
-
-        expired_at = balance.get("expired_at")
-        try:
-            expired_text = datetime.fromtimestamp(float(expired_at)).strftime("%Y-%m-%d")
-        except (TypeError, ValueError, OSError, OverflowError):
-            expired_text = "Tidak diketahui"
-        self.send_message(
-            chat_id,
-            f"Nomor: {user['number']}\n"
-            f"Pulsa: Rp {balance.get('remaining', 'Tidak diketahui')}\n"
-            f"Aktif sampai: {expired_text}",
-        )
+        self.send_message(chat_id, self.balance_text())
 
     def send_packages(self, chat_id: int):
         user = self.active_user()
